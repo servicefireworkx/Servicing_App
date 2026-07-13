@@ -172,6 +172,14 @@
     <!-- ===== SITES (shared: admin sees all + manage, tech sees assigned only) ===== -->
     <section id="view-sites" class="view active">
       <div class="section-title"><h2 id="sitesTitle">Sites</h2></div>
+      <div class="card" style="padding:12px 16px; margin-bottom:12px;">
+        <label style="margin-top:0;">Show jobs</label>
+        <select id="sitesViewFilter" onchange="applySitesViewFilter()">
+          <option value="all">All sites</option>
+          <option value="active">Active sites</option>
+          <option value="completed">Completed sites</option>
+        </select>
+      </div>
       <div id="sitesList"></div>
       <button class="btn" id="addSiteBtn" style="display:none;" onclick="openSiteForm(null)">+ Add site</button>
     </section>
@@ -226,6 +234,23 @@
         <button class="btn secondary" onclick="completeSite()" style="background:var(--green-bg); color:var(--green); border:1px solid var(--green); margin-bottom:10px;">✓ Complete this site</button>
       </div>
       <div class="divider"></div>
+      <div class="card" style="padding:12px 16px; margin-bottom:10px;">
+        <div class="row" style="gap:8px; align-items:end;">
+          <div style="flex:1;">
+            <label style="margin-top:0;">Show servicing by</label>
+            <select id="equipmentDateFilter" onchange="applyEquipmentDateFilter()">
+              <option value="all">All records</option>
+              <option value="due-today">Due today</option>
+              <option value="due-this-week">Due this week</option>
+              <option value="custom">Custom date</option>
+            </select>
+          </div>
+          <div id="equipmentDateInputWrap" style="flex:1; display:none;">
+            <label style="margin-top:0;">Select date</label>
+            <input id="equipmentDateInput" type="date" onchange="applyEquipmentDateFilter()">
+          </div>
+        </div>
+      </div>
       <div id="equipmentList"></div>
     </section>
 
@@ -461,6 +486,9 @@ let currentSiteId = null;
 let editingEquipmentId = null;
 let editingSiteId = null;
 let editingTechId = null;
+let siteViewFilter = 'all';
+let equipmentFilterMode = 'all';
+let equipmentFilterDate = '';
 
 function showView(id){
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
@@ -470,6 +498,49 @@ function showView(id){
   document.getElementById('navExport').classList.toggle('active', id==='view-export');
   if(id==='view-sites') renderSites();
   if(id==='view-technicians') renderTechnicians();
+}
+
+function applySitesViewFilter(){
+  siteViewFilter = document.getElementById('sitesViewFilter').value;
+  paintSites();
+}
+
+function getVisibleSites(){
+  if(siteViewFilter==='active') return sitesCache.filter(s=>!s.completed);
+  if(siteViewFilter==='completed') return sitesCache.filter(s=>s.completed);
+  return sitesCache;
+}
+
+function applyEquipmentDateFilter(){
+  equipmentFilterMode = document.getElementById('equipmentDateFilter').value;
+  equipmentFilterDate = document.getElementById('equipmentDateInput').value;
+  document.getElementById('equipmentDateInputWrap').style.display = equipmentFilterMode==='custom' ? 'block' : 'none';
+  paintEquipment();
+}
+
+function getWeekRange(dateString){
+  const base = new Date(dateString + 'T00:00:00');
+  const day = base.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  const start = new Date(base);
+  start.setDate(base.getDate() + diff);
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+  return {start: start.toISOString().slice(0,10), end: end.toISOString().slice(0,10)};
+}
+
+function getFilteredEquipment(){
+  const today = new Date().toISOString().slice(0,10);
+  const week = getWeekRange(today);
+  return equipmentCache.filter(e=>{
+    if(equipmentFilterMode==='all') return true;
+    const targetDate = e.nextServiceDue || e.inspectionDate || '';
+    if(!targetDate) return false;
+    if(equipmentFilterMode==='due-today') return targetDate === today;
+    if(equipmentFilterMode==='due-this-week') return targetDate >= week.start && targetDate <= week.end;
+    if(equipmentFilterMode==='custom') return targetDate === equipmentFilterDate;
+    return true;
+  });
 }
 
 /* ---------- Firestore listener bookkeeping ---------- */
@@ -496,11 +567,13 @@ function renderSites(){
 
 function paintSites(){
   const wrap = document.getElementById('sitesList');
-  if(sitesCache.length===0){
-    wrap.innerHTML = `<div class="empty"><div class="big">🏢</div>${currentRole==='admin' ? 'No sites yet. Add your first site.' : 'No sites assigned to you yet. Check with your administrator.'}</div>`;
+  const visibleSites = getVisibleSites();
+  if(visibleSites.length===0){
+    const emptyMessage = siteViewFilter==='active' ? 'No active sites right now.' : (siteViewFilter==='completed' ? 'No completed sites yet.' : (currentRole==='admin' ? 'No sites yet. Add your first site.' : 'No sites assigned to you yet. Check with your administrator.'));
+    wrap.innerHTML = `<div class="empty"><div class="big">🏢</div>${emptyMessage}</div>`;
     return;
   }
-  wrap.innerHTML = sitesCache.map(s=>{
+  wrap.innerHTML = visibleSites.map(s=>{
     const editBtn = currentRole==='admin' ? `<span class="edit-ic" onclick="event.stopPropagation(); openSiteForm('${s.id}')">✏️</span>` : '';
     const completedBadge = s.lastCompletedDate ? `<span class="pill pass" style="margin-left:6px;">✓ ${s.lastCompletedDate}</span>` : '';
     return `<div class="card site-card" onclick="openSite('${s.id}')">
@@ -674,6 +747,13 @@ let equipmentCache = [];
 
 function loadEquipmentForSite(siteId){
   if(unsubEquipment) unsubEquipment();
+  equipmentFilterMode = 'all';
+  equipmentFilterDate = '';
+  const filterEl = document.getElementById('equipmentDateFilter');
+  const dateInputEl = document.getElementById('equipmentDateInput');
+  if(filterEl) filterEl.value = 'all';
+  if(dateInputEl) dateInputEl.value = '';
+  if(document.getElementById('equipmentDateInputWrap')) document.getElementById('equipmentDateInputWrap').style.display = 'none';
   unsubEquipment = db.collection('equipment').where('siteId','==', siteId).onSnapshot(snap=>{
     equipmentCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
     equipmentCache.sort((a,b)=>(b.inspectionDate||'').localeCompare(a.inspectionDate||''));
@@ -683,11 +763,13 @@ function loadEquipmentForSite(siteId){
 
 function paintEquipment(){
   const wrap = document.getElementById('equipmentList');
-  if(equipmentCache.length===0){
-    wrap.innerHTML = `<div class="empty"><div class="big">🧯</div>No equipment logged at this site yet.</div>`;
+  const visibleEquipment = getFilteredEquipment();
+  if(equipmentCache.length===0 || visibleEquipment.length===0){
+    const emptyMessage = equipmentFilterMode==='all' ? 'No equipment logged at this site yet.' : 'No servicing records match that filter.';
+    wrap.innerHTML = `<div class="empty"><div class="big">🧯</div>${emptyMessage}</div>`;
     return;
   }
-  wrap.innerHTML = equipmentCache.map(e=>{
+  wrap.innerHTML = visibleEquipment.map(e=>{
     const dueInfo = dueStatus(e);
     const statusClass = e.status==='fail' ? 'fail' : (dueInfo.overdue ? 'due' : (e.status==='attention' ? 'due' : 'pass'));
     return `<div class="tag-card status-${statusClass}" onclick="openEquipmentForm('${e.id}')">
