@@ -2,6 +2,9 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
@@ -395,7 +398,14 @@ db.enablePersistence({synchronizeTabs:true}).catch(()=>{ /* multiple tabs open, 
 
 if('serviceWorker' in navigator){
   window.addEventListener('load', ()=>{
-    navigator.serviceWorker.register('./sw.js').catch(()=>{});
+    navigator.serviceWorker.register('./sw.js').then(reg => {
+      reg.update().catch(()=>{});
+      let refreshing = false;
+      navigator.serviceWorker.addEventListener('controllerchange', ()=>{
+        if(!refreshing){ refreshing=true; window.location.reload(); }
+      });
+      if(reg.waiting){ reg.waiting.postMessage({type:'SKIP_WAITING'}); }
+    }).catch(()=>{});
   });
 }
 
