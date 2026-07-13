@@ -393,6 +393,12 @@ const db = firebase.firestore();
 const storage = firebase.storage();
 db.enablePersistence({synchronizeTabs:true}).catch(()=>{ /* multiple tabs open, or unsupported browser — sync still works, just no offline cache */ });
 
+if('serviceWorker' in navigator){
+  window.addEventListener('load', ()=>{
+    navigator.serviceWorker.register('./sw.js').catch(()=>{});
+  });
+}
+
 /* ---------- Online/offline indicator ---------- */
 function updateSyncPill(){
   const pill = document.getElementById('syncPill');
