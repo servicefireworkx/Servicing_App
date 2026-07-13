@@ -583,7 +583,12 @@ function renderSites(){
 
 function paintSites(){
   const wrap = document.getElementById('sitesList');
-  const visibleSites = getVisibleSites();
+  const visibleSites = getVisibleSites().slice().sort((a,b)=>{
+    const aCompleted = !!a.completed;
+    const bCompleted = !!b.completed;
+    if(aCompleted !== bCompleted) return aCompleted ? 1 : -1;
+    return (a.name || '').localeCompare(b.name || '', undefined, {sensitivity:'base'});
+  });
   if(visibleSites.length===0){
     const emptyMessage = siteViewFilter==='active' ? 'No active sites right now.' : (siteViewFilter==='completed' ? 'No completed sites yet.' : (currentRole==='admin' ? 'No sites yet. Add your first site.' : 'No sites assigned to you yet. Check with your administrator.'));
     wrap.innerHTML = `<div class="empty"><div class="big">🏢</div>${emptyMessage}</div>`;
