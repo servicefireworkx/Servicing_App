@@ -631,8 +631,17 @@ async function deleteSite(){
   }catch(e){ toast('Error: ' + e.message); }
 }
 
+function isUserAssignedToSite(site){
+  return site && Array.isArray(site.assignedTo) && site.assignedTo.includes(currentUser.uid);
+}
+
 async function completeSite(){
   if(!currentSiteId) return;
+  const site = sitesCache.find(s=>s.id===currentSiteId);
+  if(!site || !(currentRole==='admin' || isUserAssignedToSite(site))){
+    toast('Insufficient permissions: only assigned technicians or admins may complete this site.');
+    return;
+  }
   if(!confirm('Mark this site as complete? You can still add or edit equipment records afterwards.')) return;
   try{
     await db.collection('sites').doc(currentSiteId).update({
@@ -647,8 +656,12 @@ async function completeSite(){
 
 async function toggleSiteCompletion(){
   if(!currentSiteId) return;
+  const site = sitesCache.find(s=>s.id===currentSiteId);
+  if(!site || !(currentRole==='admin' || isUserAssignedToSite(site))){
+    toast('Insufficient permissions: only assigned technicians or admins may reopen this site.');
+    return;
+  }
   try{
-    const site = sitesCache.find(s=>s.id===currentSiteId);
     if(site.completed){
       await db.collection('sites').doc(currentSiteId).update({ completed: false });
       toast('Site reopened');
@@ -891,13 +904,18 @@ function updateSiteDetailCompletion(){
   const activeControls = document.getElementById('activeSiteControls');
   const certBtn = document.getElementById('certBtn');
   const isAdmin = currentRole === 'admin';
+  const canEditSite = site && (isAdmin || isUserAssignedToSite(site));
   if(site && site.completed){
     if(statusCard) statusCard.style.display='block';
     if(activeControls) activeControls.style.display='none';
+    if(statusCard){
+      const reopenButton = statusCard.querySelector('button');
+      if(reopenButton) reopenButton.style.display = canEditSite ? 'inline-flex' : 'none';
+    }
     if(certBtn) certBtn.style.display = isAdmin ? 'block' : 'none';
   } else {
     if(statusCard) statusCard.style.display='none';
-    if(activeControls) activeControls.style.display='block';
+    if(activeControls) activeControls.style.display = canEditSite ? 'block' : 'none';
     if(certBtn) certBtn.style.display='none';
   }
 }
