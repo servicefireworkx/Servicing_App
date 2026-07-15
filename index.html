@@ -2,9 +2,6 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
-<meta http-equiv="Pragma" content="no-cache">
-<meta http-equiv="Expires" content="0">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
@@ -20,6 +17,9 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+<script src="https://unpkg.com/pizzip@3.2.0/dist/pizzip.js"></script>
+<script src="https://unpkg.com/docxtemplater@3.69.0/build/docxtemplater.js"></script>
 
 <style>
   :root{
@@ -193,6 +193,10 @@
       <div class="card">
         <label>Site name</label>
         <input id="siteNameInput" placeholder="e.g. Riverstone Warehouse">
+        <label>Customer name (for certificates/registers, optional)</label>
+        <input id="siteCustomerInput" placeholder="e.g. Riverstone Logistics (Pty) Ltd — defaults to site name if blank">
+        <label>Contact person (optional)</label>
+        <input id="siteContactInput" placeholder="e.g. Jane Dlamini">
         <label>Address</label>
         <input id="siteAddressInput" placeholder="Street, suburb, city">
         <label>Notes (optional)</label>
@@ -225,34 +229,13 @@
           <button class="btn secondary" style="flex-shrink:0; white-space:nowrap;" onclick="toggleSiteCompletion()">Reopen</button>
         </div>
       </div>
-      <button class="btn secondary" id="certBtn" style="margin-top:10px; display:none;" onclick="openCertificate(currentSiteId)">🖨 Generate certificate</button>
-
-      <div class="card" id="siteCompletionCard" style="padding:12px 16px;">
-        <div id="siteCompletionStatus" class="hint" style="margin:0;">Not yet marked as completed.</div>
-      </div>
+      <button class="btn secondary" id="certBtn" style="margin-top:10px; display:none;" onclick="openCertificate(currentSiteId)">🖨 Generate certificate (Word)</button>
 
       <div id="activeSiteControls">
         <button class="btn" onclick="openEquipmentForm(null)" style="margin-bottom:10px;">+ Add equipment record</button>
         <button class="btn secondary" onclick="completeSite()" style="background:var(--green-bg); color:var(--green); border:1px solid var(--green); margin-bottom:10px;">✓ Complete this site</button>
       </div>
       <div class="divider"></div>
-      <div class="card" id="equipmentFilterCard" style="padding:12px 16px; margin-bottom:10px; display:none;">
-        <div class="row" style="gap:8px; align-items:end;">
-          <div style="flex:1;">
-            <label style="margin-top:0;">Show servicing by</label>
-            <select id="equipmentDateFilter" onchange="applyEquipmentDateFilter()">
-              <option value="all">All records</option>
-              <option value="due-today">Due today</option>
-              <option value="due-this-week">Due this week</option>
-              <option value="custom">Custom date</option>
-            </select>
-          </div>
-          <div id="equipmentDateInputWrap" style="flex:1; display:none;">
-            <label style="margin-top:0;">Select date</label>
-            <input id="equipmentDateInput" type="date" onchange="applyEquipmentDateFilter()">
-          </div>
-        </div>
-      </div>
       <div id="equipmentList"></div>
     </section>
 
@@ -263,8 +246,9 @@
         <label>Equipment type</label>
         <select id="eqType" onchange="onTypeChange()">
           <option value="">Select type…</option>
+          <option value="1kg DCP">1kg DCP</option>
           <option value="1.5kg DCP">1.5kg DCP</option>
-          <option value="2kg DCP">2kg DCP</option>
+          <option value="2.5kg DCP">2.5kg DCP</option>
           <option value="4.5kg DCP">4.5kg DCP</option>
           <option value="9kg DCP">9kg DCP</option>
           <option value="2kg CO2">2kg CO₂</option>
@@ -361,7 +345,8 @@
       <div class="card">
         <label style="margin-top:0;">Export scope</label>
         <select id="exportSiteFilter"></select>
-        <button class="btn" style="margin-top:16px;" onclick="exportCSV()">Export as CSV (Excel-compatible)</button>
+        <button class="btn" style="margin-top:16px;" onclick="exportSiteRegister(document.getElementById('exportSiteFilter').value==='all' ? null : document.getElementById('exportSiteFilter').value)">Generate Site Register (Excel)</button>
+        <div class="hint">Site Register needs one specific site selected above — it won't work with "All my sites".</div>
       </div>
     </section>
 
@@ -372,7 +357,7 @@
   <nav class="bottom" id="bottomNav">
     <button id="navSites" class="active" onclick="showView('view-sites')"><span class="ic">🏢</span><span id="navSitesLabel">Sites</span></button>
     <button id="navTechnicians" style="display:none;" onclick="showView('view-technicians')"><span class="ic">👤</span><span>Techs</span></button>
-    <button id="navExport" style="display:none;" onclick="showView('view-export'); refreshExport(); loadCompanySettings();"><span class="ic">⬇</span><span>Export</span></button>
+    <button id="navExport" style="display:none;" onclick="showView('view-export'); refreshExport();"><span class="ic">⬇</span><span>Export</span></button>
   </nav>
 </div>
 
@@ -394,20 +379,6 @@ const auth = firebase.auth();
 const db = firebase.firestore();
 const storage = firebase.storage();
 db.enablePersistence({synchronizeTabs:true}).catch(()=>{ /* multiple tabs open, or unsupported browser — sync still works, just no offline cache */ });
-
-if('serviceWorker' in navigator){
-  window.addEventListener('load', async ()=>{
-    try{
-      const registrations = await navigator.serviceWorker.getRegistrations();
-      await Promise.all(registrations.map(reg => reg.unregister()));
-    }catch{}
-    const url = new URL(window.location.href);
-    if(!url.searchParams.has('v')){
-      url.searchParams.set('v', String(Date.now()));
-      window.location.replace(url.toString());
-    }
-  });
-}
 
 /* ---------- Online/offline indicator ---------- */
 function updateSyncPill(){
@@ -495,27 +466,9 @@ function setupRoleUI(){
   document.getElementById('sitesTitle').textContent = isAdmin ? 'All sites' : 'My sites';
   document.getElementById('certBtn').style.display = isAdmin ? 'block' : 'none';
   document.getElementById('navExport').style.display = isAdmin ? 'flex' : 'none';
-  document.getElementById('equipmentFilterCard').style.display = isAdmin ? 'block' : 'none';
 }
 
-/* ---------- View routing ---------- */
-let currentSiteId = null;
-let editingEquipmentId = null;
-let editingSiteId = null;
-let editingTechId = null;
 let siteViewFilter = 'all';
-let equipmentFilterMode = 'all';
-let equipmentFilterDate = '';
-
-function showView(id){
-  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
-  document.getElementById(id).classList.add('active');
-  document.getElementById('navSites').classList.toggle('active', ['view-sites','view-site-form','view-site-detail','view-equipment-form'].includes(id));
-  document.getElementById('navTechnicians').classList.toggle('active', ['view-technicians','view-tech-form'].includes(id));
-  document.getElementById('navExport').classList.toggle('active', id==='view-export');
-  if(id==='view-sites') renderSites();
-  if(id==='view-technicians') renderTechnicians();
-}
 
 function applySitesViewFilter(){
   siteViewFilter = document.getElementById('sitesViewFilter').value;
@@ -528,36 +481,20 @@ function getVisibleSites(){
   return sitesCache;
 }
 
-function applyEquipmentDateFilter(){
-  equipmentFilterMode = document.getElementById('equipmentDateFilter').value;
-  equipmentFilterDate = document.getElementById('equipmentDateInput').value;
-  document.getElementById('equipmentDateInputWrap').style.display = equipmentFilterMode==='custom' ? 'block' : 'none';
-  paintEquipment();
-}
+/* ---------- View routing ---------- */
+let currentSiteId = null;
+let editingEquipmentId = null;
+let editingSiteId = null;
+let editingTechId = null;
 
-function getWeekRange(dateString){
-  const base = new Date(dateString + 'T00:00:00');
-  const day = base.getDay();
-  const diff = day === 0 ? -6 : 1 - day;
-  const start = new Date(base);
-  start.setDate(base.getDate() + diff);
-  const end = new Date(start);
-  end.setDate(start.getDate() + 6);
-  return {start: start.toISOString().slice(0,10), end: end.toISOString().slice(0,10)};
-}
-
-function getFilteredEquipment(){
-  const today = new Date().toISOString().slice(0,10);
-  const week = getWeekRange(today);
-  return equipmentCache.filter(e=>{
-    if(equipmentFilterMode==='all') return true;
-    const targetDate = e.nextServiceDue || e.inspectionDate || '';
-    if(!targetDate) return false;
-    if(equipmentFilterMode==='due-today') return targetDate === today;
-    if(equipmentFilterMode==='due-this-week') return targetDate >= week.start && targetDate <= week.end;
-    if(equipmentFilterMode==='custom') return targetDate === equipmentFilterDate;
-    return true;
-  });
+function showView(id){
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  document.getElementById('navSites').classList.toggle('active', ['view-sites','view-site-form','view-site-detail','view-equipment-form'].includes(id));
+  document.getElementById('navTechnicians').classList.toggle('active', ['view-technicians','view-tech-form'].includes(id));
+  document.getElementById('navExport').classList.toggle('active', id==='view-export');
+  if(id==='view-sites') renderSites();
+  if(id==='view-technicians') renderTechnicians();
 }
 
 /* ---------- Firestore listener bookkeeping ---------- */
@@ -597,11 +534,11 @@ function paintSites(){
   }
   wrap.innerHTML = visibleSites.map(s=>{
     const editBtn = currentRole==='admin' ? `<span class="edit-ic" onclick="event.stopPropagation(); openSiteForm('${s.id}')">✏️</span>` : '';
+    const completedBadge = s.completed ? `<span class="pill pass" style="margin-left:6px;">✓ Complete</span>` : '';
     const categoryLabel = siteCategoryLabel(s.category);
-    const categoryBadge = categoryLabel ? `<span class="pill" style="margin-left:6px;">${escapeHtml(categoryLabel)}</span>` : '';
-    const completedBadge = s.lastCompletedDate ? `<span class="pill pass" style="margin-left:6px;">✓ ${s.lastCompletedDate}</span>` : '';
+    const categoryBadge = categoryLabel ? `<span class="pill" style="margin-left:6px;">${categoryLabel}</span>` : '';
     return `<div class="card site-card" onclick="openSite('${s.id}')">
-      <div><div class="name">${escapeHtml(s.name)} ${categoryBadge}${completedBadge}</div><div class="meta">${escapeHtml(s.address||'No address on file')}</div></div>
+      <div><div class="name">${escapeHtml(s.name)} ${completedBadge}${categoryBadge}</div><div class="meta">${escapeHtml(s.address||'No address on file')}</div></div>
       <div style="display:flex; align-items:center;">${editBtn}</div>
     </div>`;
   }).join('');
@@ -612,7 +549,6 @@ function openSite(id){
   const site = sitesCache.find(s=>s.id===id);
   document.getElementById('siteDetailName').textContent = site ? site.name : '';
   document.getElementById('siteDetailAddress').textContent = site ? (site.address||'') : '';
-  renderSiteCompletion(site);
   showView('view-site-detail');
   updateSiteDetailCompletion();
   loadEquipmentForSite(id);
@@ -632,12 +568,16 @@ async function openSiteForm(id){
   if(id){
     const site = sitesCache.find(s=>s.id===id);
     document.getElementById('siteNameInput').value = site.name||'';
+    document.getElementById('siteCustomerInput').value = site.customerName||'';
+    document.getElementById('siteContactInput').value = site.contactPerson||'';
     document.getElementById('siteAddressInput').value = site.address||'';
     document.getElementById('siteNotesInput').value = site.notes||'';
     assigned = site.assignedTo || [];
     document.getElementById('siteCategoryInput').value = site.category || '';
   } else {
     document.getElementById('siteNameInput').value='';
+    document.getElementById('siteCustomerInput').value='';
+    document.getElementById('siteContactInput').value='';
     document.getElementById('siteAddressInput').value='';
     document.getElementById('siteNotesInput').value='';
     document.getElementById('siteCategoryInput').value='';
@@ -661,6 +601,8 @@ async function saveSite(){
   const checked = Array.from(document.querySelectorAll('#assignTechList input[type=checkbox]:checked')).map(el=>el.value);
   const payload = {
     name,
+    customerName: document.getElementById('siteCustomerInput').value.trim(),
+    contactPerson: document.getElementById('siteContactInput').value.trim(),
     address: document.getElementById('siteAddressInput').value.trim(),
     notes: document.getElementById('siteNotesInput').value.trim(),
     assignedTo: checked
@@ -695,7 +637,8 @@ async function completeSite(){
   try{
     await db.collection('sites').doc(currentSiteId).update({
       completed: true,
-      completedAt: firebase.firestore.FieldValue.serverTimestamp()
+      completedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      completedBy: currentProfile.name
     });
     toast('Site marked as complete');
     updateSiteDetailCompletion();
@@ -712,57 +655,250 @@ async function toggleSiteCompletion(){
     } else {
       await db.collection('sites').doc(currentSiteId).update({
         completed: true,
-        completedAt: firebase.firestore.FieldValue.serverTimestamp()
+        completedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        completedBy: currentProfile.name
       });
       toast('Site marked as complete');
     }
     updateSiteDetailCompletion();
   }catch(e){ toast('Error: ' + e.message); }
 }
-function renderSiteCompletion(site){
-  const el = document.getElementById('siteCompletionStatus');
-  if(site && site.lastCompletedDate){
-    el.textContent = `Marked completed on ${site.lastCompletedDate} by ${site.lastCompletedBy||'—'}`;
-  } else {
-    el.textContent = 'Not yet marked as completed.';
+
+/* ---------- Shared helpers for certificate/register generation ---------- */
+async function fetchTemplateArrayBuffer(url){
+  try{
+    const res = await fetch(url, { cache: 'no-store' });
+    if(!res.ok) throw new Error(`Could not load ${url} (HTTP ${res.status}). Make sure it's uploaded alongside index.html.`);
+    return await res.arrayBuffer();
+  }catch(e){
+    throw new Error(`Could not load template ${url}: ${e.message}`);
   }
 }
 
-async function markSiteCompleted(){
-  if(!currentSiteId) return;
-  try{
-    const today = new Date().toISOString().slice(0,10);
-    await db.collection('sites').doc(currentSiteId).update({
-      lastCompletedDate: today,
-      lastCompletedBy: currentProfile.name
-    });
-    toast('Site marked as completed');
-    const site = sitesCache.find(s=>s.id===currentSiteId);
-    if(site){ site.lastCompletedDate = today; site.lastCompletedBy = currentProfile.name; }
-    renderSiteCompletion(site);
-    updateSiteDetailCompletion();
-  }catch(e){ toast('Error: ' + e.message); }
+// Friendly service-line wording for the certificate (e.g. "12 x 4.5kg Fire Extinguisher Service")
+function equipmentCertLabel(type){
+  const map = {
+    '1kg DCP':'1kg Fire Extinguisher Service',
+    '1.5kg DCP':'1.5kg Fire Extinguisher Service',
+    '2.5kg DCP':'2.5kg Fire Extinguisher Service',
+    '4.5kg DCP':'4.5kg Fire Extinguisher Service',
+    '9kg DCP':'9kg Fire Extinguisher Service',
+    '2kg CO2':'2kg CO\u2082 Fire Extinguisher Service',
+    '5kg CO2':'5kg CO\u2082 Fire Extinguisher Service',
+    '10kg CO2':'10kg CO\u2082 Fire Extinguisher Service',
+    '9L Water':'9L Water Fire Extinguisher Service',
+    '9L Foam':'9L Foam Fire Extinguisher Service',
+    'Lithium':'Lithium Fire Extinguisher Service',
+    'Hydrant':'Hydrant Service',
+    'Hose reel':'Fire Hose Reel Service',
+    'Siren':'Siren Service',
+    'Fire Blanket':'Fire Blanket Service',
+    'Trolley':'Trolley Service'
+  };
+  return map[type] || (type + ' Service');
 }
 
+function downloadBlob(blob, filename){
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function setWorksheetCellValue(worksheet, cellRef, value, style){
+  if(!worksheet[cellRef]) worksheet[cellRef] = {};
+  if(value === '' || value === null || value === undefined){
+    worksheet[cellRef].t = 's';
+    worksheet[cellRef].v = '';
+  } else if(typeof value === 'number'){
+    worksheet[cellRef].t = 'n';
+    worksheet[cellRef].v = value;
+  } else if(value instanceof Date){
+    worksheet[cellRef].t = 'd';
+    worksheet[cellRef].v = value;
+  } else {
+    worksheet[cellRef].t = 's';
+    worksheet[cellRef].v = String(value);
+  }
+  if(style) worksheet[cellRef].s = style;
+}
+
+/* ---------- Certificate (Word .docx, matches company template) ---------- */
+async function openCertificate(siteId){
+  if(!siteId){ toast('No site selected'); return; }
+  try{
+    toast('Building certificate…');
+    const siteDoc = await db.collection('sites').doc(siteId).get();
+    if(!siteDoc.exists){ toast('Site not found'); return; }
+    const site = { id: siteDoc.id, ...siteDoc.data() };
+    const eqSnap = await db.collection('equipment').where('siteId','==', siteId).get();
+    const items = eqSnap.docs.map(d=>({id:d.id, ...d.data()}));
+
+    const counts = {};
+    items.forEach(it=>{ counts[it.type] = (counts[it.type]||0) + 1; });
+    const equipmentLines = Object.keys(counts).map(type => `${counts[type]} x ${equipmentCertLabel(type)}`);
+    if(equipmentLines.length === 0){ equipmentLines.push('No equipment recorded at this site'); }
+
+    const serviceDate = (site.completedAt && site.completedAt.toDate)
+      ? site.completedAt.toDate().toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' })
+      : new Date().toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' });
+
+    const templateBuf = await fetchTemplateArrayBuffer('certificate-template.docx');
+    const zip = new PizZip(templateBuf);
+    const doc = new window.docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
+    doc.render({
+      clientName: site.customerName || site.name || 'Untitled site',
+      siteAddress: site.address || '',
+      serviceDate,
+      equipmentLines
+    });
+    const out = doc.getZip().generate({
+      type: 'blob',
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    });
+    const filename = `certificate-${(site.name||'site').replace(/[^a-z0-9]+/gi,'-').toLowerCase()}-${new Date().toISOString().slice(0,10)}.docx`;
+    downloadBlob(out, filename);
+    toast('Certificate downloaded');
+  }catch(e){
+    toast('Error generating certificate: ' + e.message);
+  }
+}
+
+/* ---------- Site Register (Excel .xlsx, matches company template) ---------- */
+// Each block is one printable "Site Register" panel in the template; the template has
+// three (two on Sheet1, one on Sheet2), each holding 25 numbered equipment rows.
+const REGISTER_BLOCKS = [
+  { sheet:'Sheet1', titleRow:1 },
+  { sheet:'Sheet1', titleRow:38 },
+  { sheet:'Sheet2', titleRow:1 }
+];
+const REGISTER_ROWS_PER_BLOCK = 25;
+
+// Which checkbox-grid column a given equipment record belongs in, or null if it
+// doesn't have a dedicated column (shouldn't happen now that Lithium/Trolley have one).
+function registerColumnForItem(item){
+  const weightCols = {
+    '1kg DCP':'B', '1.5kg DCP':'C', '2.5kg DCP':'D', '4.5kg DCP':'E', '9kg DCP':'F',
+    '2kg CO2':'G', '5kg CO2':'H', '10kg CO2':'I'
+  };
+  if(weightCols[item.type]) return weightCols[item.type];
+  if(item.type==='9L Water' || item.type==='9L Foam') return 'J';
+  if(item.type==='Hydrant') return 'K';
+  if(item.type==='Hose reel') return 'L';
+  if(item.type==='Siren') return 'M';
+  if(item.type==='Fire Blanket') return 'N';
+  if(item.type==='Lithium') return 'O';
+  if(item.type==='Trolley') return 'P';
+  return null;
+}
+
+async function exportSiteRegister(siteId){
+  if(!siteId){ toast('Select a specific site first (not "All sites")'); return; }
+  try{
+    toast('Building site register…');
+    const siteDoc = await db.collection('sites').doc(siteId).get();
+    if(!siteDoc.exists){ toast('Site not found'); return; }
+    const site = { id: siteDoc.id, ...siteDoc.data() };
+    const eqSnap = await db.collection('equipment').where('siteId','==', siteId).get();
+    const items = eqSnap.docs.map(d=>({id:d.id, ...d.data()}));
+
+    const capacity = REGISTER_BLOCKS.length * REGISTER_ROWS_PER_BLOCK;
+    if(items.length > capacity){
+      toast(`This site has ${items.length} items but the register template only holds ${capacity} — the rest won't be listed. Contact your admin about extending the template.`);
+    }
+
+    const todayStr = new Date().toISOString().slice(0,10);
+    const serviceDates = items.map(i=>i.serviceDate).filter(Boolean).sort();
+    const latestServiceDate = serviceDates.length ? serviceDates[serviceDates.length-1] : '';
+    const nextDueDates = items.map(i=>i.nextServiceDue).filter(Boolean).sort();
+    const earliestNextDue = nextDueDates.length ? nextDueDates[0] : '';
+
+    const workbook = new ExcelJS.Workbook();
+    const ws = workbook.addWorksheet('Site Register');
+    ws.columns = [
+      { width: 6 },
+      { width: 24 },
+      { width: 12 },
+      { width: 20 },
+      { width: 20 },
+      { width: 12 },
+      { width: 16 },
+      { width: 16 },
+      { width: 28 }
+    ];
+
+    const headerImageBuffer = await fetchTemplateArrayBuffer('Header.new%20(1).png');
+    const imageId = workbook.addImage({ buffer: headerImageBuffer, extension: 'png' });
+    ws.addImage(imageId, { tl: { col: 0.05, row: 0.05 }, ext: { width: 18, height: 2.4 } });
+
+    ws.getCell('A3').value = 'Site Register';
+    ws.getCell('A3').font = { bold: true, size: 16 };
+    ws.getCell('A4').value = site.customerName || site.name || '';
+    ws.getCell('A4').font = { bold: true, size: 11 };
+    ws.getCell('D4').value = `Date: ${todayStr}`;
+    ws.getCell('D5').value = `Last service: ${latestServiceDate}`;
+    ws.getCell('D6').value = `Next due: ${earliestNextDue}`;
+    ws.getCell('G4').value = `Contact: ${site.contactPerson || ''}`;
+    ws.getCell('G5').value = `Address: ${site.address || ''}`;
+    ws.getCell('G6').value = `Technician: ${items[0] && items[0].technicianName ? items[0].technicianName : (currentProfile ? currentProfile.name : '')}`;
+
+    const headers = ['No', 'Type', 'Weight', 'Make', 'Location', 'Year', 'Pressure Test', 'Next Due', 'Notes'];
+    const headerRow = ws.addRow(headers);
+    headerRow.eachCell(cell => {
+      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFB22222' } };
+      cell.alignment = { vertical: 'middle', horizontal: 'center' };
+    });
+
+    items.forEach((item, idx) => {
+      const row = ws.addRow([
+        idx + 1,
+        typeLabel(item.type),
+        item.size || '',
+        item.make || '',
+        item.location || '',
+        item.mfgDate ? item.mfgDate.slice(0, 4) : '',
+        item.pressureTestDue ? 'Y' : 'N',
+        item.nextServiceDue || '',
+        item.notes || ''
+      ]);
+      row.eachCell(cell => {
+        cell.alignment = { vertical: 'top', horizontal: 'left' };
+      });
+    });
+
+    ws.getRow(1).height = 4;
+    ws.getRow(2).height = 4;
+    ws.getRow(3).height = 24;
+    ws.getRow(4).height = 18;
+    ws.getRow(5).height = 18;
+    ws.getRow(6).height = 18;
+
+    const outBuf = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([outBuf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const filename = `site-register-${(site.name||'site').replace(/[^a-z0-9]+/gi,'-').toLowerCase()}-${todayStr}.xlsx`;
+    downloadBlob(blob, filename);
+    toast('Site register downloaded');
+  }catch(e){
+    console.error('Site register export failed', e);
+    toast('Error generating register: ' + e.message);
+  }
+}
 function updateSiteDetailCompletion(){
   const site = sitesCache.find(s=>s.id===currentSiteId);
   const statusCard = document.getElementById('completionStatusCard');
   const activeControls = document.getElementById('activeSiteControls');
   const certBtn = document.getElementById('certBtn');
-  const siteCompletionCard = document.getElementById('siteCompletionCard');
-  const siteCompletionStatus = document.getElementById('siteCompletionStatus');
+  const isAdmin = currentRole === 'admin';
   if(site && site.completed){
     if(statusCard) statusCard.style.display='block';
     if(activeControls) activeControls.style.display='none';
-    if(certBtn) certBtn.style.display='block';
-    if(siteCompletionCard) siteCompletionCard.style.display='none';
-    if(siteCompletionStatus) siteCompletionStatus.textContent = 'This site was completed.';
+    if(certBtn) certBtn.style.display = isAdmin ? 'block' : 'none';
   } else {
     if(statusCard) statusCard.style.display='none';
     if(activeControls) activeControls.style.display='block';
     if(certBtn) certBtn.style.display='none';
-    if(siteCompletionCard) siteCompletionCard.style.display='block';
-    if(siteCompletionStatus) siteCompletionStatus.textContent = 'Not yet marked as completed.';
   }
 }
 
@@ -771,13 +907,6 @@ let equipmentCache = [];
 
 function loadEquipmentForSite(siteId){
   if(unsubEquipment) unsubEquipment();
-  equipmentFilterMode = 'all';
-  equipmentFilterDate = '';
-  const filterEl = document.getElementById('equipmentDateFilter');
-  const dateInputEl = document.getElementById('equipmentDateInput');
-  if(filterEl) filterEl.value = 'all';
-  if(dateInputEl) dateInputEl.value = '';
-  if(document.getElementById('equipmentDateInputWrap')) document.getElementById('equipmentDateInputWrap').style.display = 'none';
   unsubEquipment = db.collection('equipment').where('siteId','==', siteId).onSnapshot(snap=>{
     equipmentCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
     equipmentCache.sort((a,b)=>(b.inspectionDate||'').localeCompare(a.inspectionDate||''));
@@ -787,13 +916,11 @@ function loadEquipmentForSite(siteId){
 
 function paintEquipment(){
   const wrap = document.getElementById('equipmentList');
-  const visibleEquipment = getFilteredEquipment();
-  if(equipmentCache.length===0 || visibleEquipment.length===0){
-    const emptyMessage = equipmentFilterMode==='all' ? 'No equipment logged at this site yet.' : 'No servicing records match that filter.';
-    wrap.innerHTML = `<div class="empty"><div class="big">🧯</div>${emptyMessage}</div>`;
+  if(equipmentCache.length===0){
+    wrap.innerHTML = `<div class="empty"><div class="big">🧯</div>No equipment logged at this site yet.</div>`;
     return;
   }
-  wrap.innerHTML = visibleEquipment.map(e=>{
+  wrap.innerHTML = equipmentCache.map(e=>{
     const dueInfo = dueStatus(e);
     const statusClass = e.status==='fail' ? 'fail' : (dueInfo.overdue ? 'due' : (e.status==='attention' ? 'due' : 'pass'));
     return `<div class="tag-card status-${statusClass}" onclick="openEquipmentForm('${e.id}')">
@@ -803,6 +930,7 @@ function paintEquipment(){
         <div class="sub">${escapeHtml(e.location||'No location noted')}${e.serial?(' · Tag '+escapeHtml(e.serial)):''} · ${escapeHtml(e.technicianName||'')}</div>
         <div class="pillrow">
           <span class="pill ${e.status==='fail'?'fail':(e.status==='attention'?'due':'pass')}">${statusLabel(e.status)}</span>
+          ${(dueInfo.overdue && e.status!=='fail') ? `<span class="pill due">⚠ Overdue</span>` : ''}
           ${e.nextServiceDue ? `<span class="pill ${dueInfo.serviceOverdue?'due':''}">Service due ${e.nextServiceDue}</span>` : ''}
           ${e.pressureTestDue ? `<span class="pill ${dueInfo.pressureOverdue?'due':''}">Pressure test ${e.pressureTestDue}</span>` : ''}
         </div>
@@ -832,10 +960,11 @@ const CHECKLISTS = {
   HoseReel:[['hose','Hose free of cracks, kinks or perishing'],['nozzle','Nozzle / valve operates freely, no leaks'],['reel','Reel winds and unwinds smoothly'],['pressure','Water pressure and flow adequate on test'],['label','Service label present, legible and up to date'],['signage','Signage present and legible'],['access','Unobstructed, correctly mounted and signed']],
   Blanket:[['pouch','Pouch / container undamaged and sealed'],['pull','Pull tabs / release cords intact'],['label','Service label present, legible and up to date'],['signage','Signage present and legible'],['access','Unobstructed, correctly mounted and signed']]
 };
+function isCO2Type(type){ return !!type && type.indexOf('CO2') !== -1; }
 function getChecklistDef(type){
-  if(type==='CO2') return CHECKLISTS.CO2;
-  if(type==='HoseReel') return CHECKLISTS.HoseReel;
-  if(type==='Blanket') return CHECKLISTS.Blanket;
+  if(isCO2Type(type)) return CHECKLISTS.CO2;
+  if(type==='Hose reel') return CHECKLISTS.HoseReel;
+  if(type==='Fire Blanket') return CHECKLISTS.Blanket;
   return CHECKLISTS.default;
 }
 let currentChecklistValues = {};
@@ -857,7 +986,7 @@ function setCheck(key, val){
 function onTypeChange(){
   const type = document.getElementById('eqType').value;
   renderChecklist(type);
-  document.getElementById('ptHint').textContent = type==='CO2' ? '(10 yrs)' : (type ? '(5 yrs)' : '');
+  document.getElementById('ptHint').textContent = isCO2Type(type) ? '(10 yrs)' : (type ? '(5 yrs)' : '');
 }
 function onServiceDateChange(){
   const d = document.getElementById('eqServiceDate').value;
@@ -866,7 +995,7 @@ function onServiceDateChange(){
   const base = new Date(d+'T00:00:00');
   const nextService = new Date(base); nextService.setFullYear(nextService.getFullYear()+1);
   document.getElementById('eqNextDue').value = nextService.toISOString().slice(0,10);
-  const ptYears = type==='CO2' ? 10 : 5;
+  const ptYears = isCO2Type(type) ? 10 : 5;
   const pt = new Date(base); pt.setFullYear(pt.getFullYear()+ptYears);
   document.getElementById('eqPressureTestDue').value = pt.toISOString().slice(0,10);
 }
@@ -902,7 +1031,7 @@ function openEquipmentForm(id){
     document.getElementById('eqInspDate').value = e.inspectionDate || '';
     document.getElementById('eqNotes').value = e.notes || '';
     document.getElementById('eqTechDisplay').textContent = e.technicianName + (e.saqcc ? (' · ' + e.saqcc) : '');
-    document.getElementById('ptHint').textContent = e.type==='CO2' ? '(10 yrs)' : (e.type ? '(5 yrs)' : '');
+    document.getElementById('ptHint').textContent = isCO2Type(e.type) ? '(10 yrs)' : (e.type ? '(5 yrs)' : '');
     if(e.photoURL){ currentPhotoURL = e.photoURL; preview.src = e.photoURL; preview.style.display='block'; }
     renderChecklist(e.type || '');
   } else {
@@ -921,7 +1050,6 @@ function openEquipmentForm(id){
 async function saveEquipment(){
   const type = document.getElementById('eqType').value;
   if(!type){ toast('Select an equipment type'); return; }
-  const saveBtnRow = event ? event.target : null;
 
   let photoURL = currentPhotoURL;
   try{
@@ -1111,17 +1239,16 @@ async function deleteTechnician(id){
     eqSnap.docs.forEach(doc=>{ batch.delete(db.collection('equipment').doc(doc.id)); });
     // Commit batch
     await batch.commit();
-    // Delete Firebase Auth user (if password known, can delete; otherwise skip)
-    try{
-      const secondaryApp = firebase.initializeApp(firebaseConfig, 'DeleteAuth_' + Date.now());
-      const email = `tech${t.techNumber}@${TECH_EMAIL_DOMAIN}`;
-      try{
-        // Auth users created with this email can only be deleted from console or via admin SDK
-        // This attempt will fail, but we've already removed access at Firestore level
-      }catch(authErr){ }
-      try{ await secondaryApp.auth().signOut(); await secondaryApp.delete(); }catch(e){}
-    }catch(appErr){}
-    toast('Technician and all data removed');
+    // NOTE: this only removes the technician's Firestore profile, lookup record,
+    // site assignments and equipment records. Their Firebase Auth account itself
+    // is NOT deleted here — the client SDK has no permission to delete another
+    // user's Auth account (that requires the Admin SDK / a Cloud Function).
+    // Effectively they're locked out anyway: on next sign-in, onAuthStateChanged
+    // finds no technicians/{uid} profile and signs them straight back out. But the
+    // orphaned Auth account will still count toward your Firebase Auth user list
+    // until it's removed manually from the Firebase Console (Authentication → Users)
+    // or via a Cloud Function using the Admin SDK.
+    toast('Technician removed. Their login will stop working, but delete their Auth account from the Firebase Console too.');
     showView('view-technicians');
   }catch(e){ toast('Error: ' + e.message); }
 }
