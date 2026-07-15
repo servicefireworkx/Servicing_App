@@ -843,7 +843,7 @@ async function exportSiteRegister(siteId){
 
     const headerImageBuffer = await fetchTemplateArrayBuffer('Header.new%20(1).png');
     const imageId = workbook.addImage({ buffer: headerImageBuffer, extension: 'png' });
-    ws.addImage(imageId, { tl: { col: 0.05, row: 0.05 }, ext: { width: 18, height: 2.4 } });
+    ws.addImage(imageId, { tl: { col: 0, row: 0 }, ext: { width: 5, height: 4 } });
 
     ws.getCell('A3').value = 'Site Register';
     ws.getCell('A3').font = { bold: true, size: 16 };
