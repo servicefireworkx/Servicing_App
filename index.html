@@ -279,9 +279,12 @@
         </div>
         <div class="row">
           <div><label>Next service due</label><input id="eqNextDue" type="date"></div>
-          <div><label>Pressure test due <span id="ptHint" style="text-transform:none;font-weight:500;"></span></label><input id="eqPressureTestDue" type="date"></div>
+          <div><label>Pressure test due <span id="ptHint" style="text-transform:none;font-weight:500;"></span></label><input id="eqPressureTestDue" type="date" readonly></div>
         </div>
-        <div class="hint">Next service auto-fills to 1 year after the service date (annual servicing per SANS 1475). Pressure test due auto-fills to 5 years (powder/foam/water) or 10 years (CO2) after service date.</div>
+        <div class="row">
+          <div><label>Previous pressure test date</label><input id="eqPrevPressureTestDate" type="date" onchange="onPrevPressureTestDateChange()"></div>
+        </div>
+        <div class="hint">Next service auto-fills to 1 year after the service date (annual servicing per SANS 1475). Pressure test due auto-fills to 5 years (powder/foam/water) or 10 years (CO2) after the previous pressure test date.</div>
 
         <div class="divider"></div>
         <label style="margin-top:0;">Inspection checklist</label>
@@ -806,6 +809,27 @@ function registerColumnForItem(item){
   return null;
 }
 
+function registerCellValueForItem(item){
+  const fromSize = (item.size || '').trim();
+  if(fromSize) return fromSize;
+  const fromType = (item.type || '').trim();
+  const weightMatch = fromType.match(/(\d+(?:\.\d+)?)\s*(kg|l)/i);
+  if(weightMatch) return `${weightMatch[1]}${weightMatch[2].toUpperCase()}`;
+  return fromType;
+}
+
+function checklistSummaryForItem(item){
+  const checklist = item.checklist || {};
+  const defs = getChecklistDef(item.type || '');
+  const entries = Object.entries(checklist).filter(([, value]) => value);
+  if(entries.length === 0) return '';
+  return entries.map(([key, value]) => {
+    const def = defs.find(([checkKey]) => checkKey === key);
+    const label = def ? def[1] : key;
+    return `${label}: ${value === 'pass' ? 'Pass' : 'Fail'}`;
+  }).join(' | ');
+}
+
 async function exportSiteRegister(siteId){
   if(!siteId){ toast('Select a specific site first (not "All sites")'); return; }
   try{
@@ -816,9 +840,9 @@ async function exportSiteRegister(siteId){
     const eqSnap = await db.collection('equipment').where('siteId','==', siteId).get();
     const items = eqSnap.docs.map(d=>({id:d.id, ...d.data()}));
 
-    const capacity = REGISTER_BLOCKS.length * REGISTER_ROWS_PER_BLOCK;
+    const capacity = 25;
     if(items.length > capacity){
-      toast(`This site has ${items.length} items but the register template only holds ${capacity} — the rest won't be listed. Contact your admin about extending the template.`);
+      toast(`This site has ${items.length} items but the register template only holds ${capacity} — the rest won't be listed.`);
     }
 
     const todayStr = new Date().toISOString().slice(0,10);
@@ -827,66 +851,47 @@ async function exportSiteRegister(siteId){
     const nextDueDates = items.map(i=>i.nextServiceDue).filter(Boolean).sort();
     const earliestNextDue = nextDueDates.length ? nextDueDates[0] : '';
 
+    const templateBuf = await fetchTemplateArrayBuffer('site-register-template.xlsx');
     const workbook = new ExcelJS.Workbook();
-    const ws = workbook.addWorksheet('Site Register');
-    ws.columns = [
-      { width: 6 },
-      { width: 24 },
-      { width: 12 },
-      { width: 20 },
-      { width: 20 },
-      { width: 12 },
-      { width: 16 },
-      { width: 16 },
-      { width: 28 }
-    ];
+    await workbook.xlsx.load(templateBuf);
 
-    const headerImageBuffer = await fetchTemplateArrayBuffer('Header.new%20(1).png');
-    const imageId = workbook.addImage({ buffer: headerImageBuffer, extension: 'png' });
-    ws.addImage(imageId, { tl: { col: 0, row: 0 }, ext: { width: 5, height: 4 } });
+    const sheets = [workbook.getWorksheet('Sheet1'), workbook.getWorksheet('Sheet2')].filter(Boolean);
+    if(sheets.length === 0){ throw new Error('The uploaded register template could not be loaded.'); }
 
-    ws.getCell('A3').value = 'Site Register';
-    ws.getCell('A3').font = { bold: true, size: 16 };
-    ws.getCell('A4').value = site.customerName || site.name || '';
-    ws.getCell('A4').font = { bold: true, size: 11 };
-    ws.getCell('D4').value = `Date: ${todayStr}`;
-    ws.getCell('D5').value = `Last service: ${latestServiceDate}`;
-    ws.getCell('D6').value = `Next due: ${earliestNextDue}`;
-    ws.getCell('G4').value = `Contact: ${site.contactPerson || ''}`;
-    ws.getCell('G5').value = `Address: ${site.address || ''}`;
-    ws.getCell('G6').value = `Technician: ${items[0] && items[0].technicianName ? items[0].technicianName : (currentProfile ? currentProfile.name : '')}`;
+    const techName = items[0] && items[0].technicianName ? items[0].technicianName : (currentProfile ? currentProfile.name : '');
+    const saqccNumber = currentProfile && currentProfile.saqcc ? currentProfile.saqcc : '';
 
-    const headers = ['No', 'Type', 'Weight', 'Make', 'Location', 'Year', 'Pressure Test', 'Next Due', 'Notes'];
-    const headerRow = ws.addRow(headers);
-    headerRow.eachCell(cell => {
-      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFB22222' } };
-      cell.alignment = { vertical: 'middle', horizontal: 'center' };
-    });
+    sheets.forEach(ws => {
+      ws.getCell('B3').value = `Date: ${todayStr}`;
+      ws.getCell('B4').value = `Customer: ${site.customerName || site.name || ''}`;
+      ws.getCell('B5').value = `Date of service: ${latestServiceDate}`;
+      ws.getCell('B6').value = `Date of next service: ${earliestNextDue}`;
+      ws.getCell('K2').value = `Contact Person: ${site.contactPerson || ''}`;
+      ws.getCell('K3').value = `Address: ${site.address || ''}`;
+      ws.getCell('Q3').value = `Type of service: ${siteCategoryLabel(site.category) || 'Inspection'}`;
+      ws.getCell('K4').value = `Technician: ${techName}`;
+      ws.getCell('K5').value = `Saqcc Number: ${saqccNumber}`;
 
-    items.forEach((item, idx) => {
-      const row = ws.addRow([
-        idx + 1,
-        typeLabel(item.type),
-        item.size || '',
-        item.make || '',
-        item.location || '',
-        item.mfgDate ? item.mfgDate.slice(0, 4) : '',
-        item.pressureTestDue ? 'Y' : 'N',
-        item.nextServiceDue || '',
-        item.notes || ''
-      ]);
-      row.eachCell(cell => {
-        cell.alignment = { vertical: 'top', horizontal: 'left' };
+      const visibleItems = items.slice(0, capacity);
+      visibleItems.forEach((item, idx) => {
+        const rowNum = 9 + idx;
+        const col = registerColumnForItem(item);
+        if(col){
+          const cell = ws.getCell(`${col}${rowNum}`);
+          cell.value = registerCellValueForItem(item);
+        }
+        ws.getCell(`A${rowNum}`).value = idx + 1;
+        ws.getCell(`R${rowNum}`).value = item.mfgDate ? item.mfgDate.slice(0, 4) : '';
+        ws.getCell(`S${rowNum}`).value = item.previousPressureTestDate ? item.previousPressureTestDate.slice(0, 4) : '';
+        ws.getCell(`T${rowNum}`).value = item.pressureTestDue || '';
+        ws.getCell(`U${rowNum}`).value = item.make || '';
+        const currentYear = new Date().getFullYear();
+        const pressureTestDueYear = item.pressureTestDue ? new Date(item.pressureTestDue + 'T00:00:00').getFullYear() : null;
+        ws.getCell(`V${rowNum}`).value = pressureTestDueYear === currentYear ? 'Y' : 'N';
+        ws.getCell(`W${rowNum}`).value = item.location || '';
+        ws.getCell(`X${rowNum}`).value = checklistSummaryForItem(item) || [item.notes || '', item.serial || ''].filter(Boolean).join(' | ');
       });
     });
-
-    ws.getRow(1).height = 4;
-    ws.getRow(2).height = 4;
-    ws.getRow(3).height = 24;
-    ws.getRow(4).height = 18;
-    ws.getRow(5).height = 18;
-    ws.getRow(6).height = 18;
 
     const outBuf = await workbook.xlsx.writeBuffer();
     const blob = new Blob([outBuf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
@@ -1001,21 +1006,33 @@ function setCheck(key, val){
   currentChecklistValues[key] = currentChecklistValues[key]===val ? null : val;
   renderChecklist(document.getElementById('eqType').value);
 }
+function pressureTestIntervalYears(type){ if(!type) return null; return isCO2Type(type) ? 10 : 5; }
+function computePressureTestDue(previousDate, type){
+  if(!previousDate || !type) return '';
+  const intervalYears = pressureTestIntervalYears(type);
+  if(intervalYears === null) return '';
+  const base = new Date(previousDate + 'T00:00:00');
+  const pt = new Date(base);
+  pt.setFullYear(pt.getFullYear() + intervalYears);
+  return pt.toISOString().slice(0,10);
+}
 function onTypeChange(){
   const type = document.getElementById('eqType').value;
   renderChecklist(type);
   document.getElementById('ptHint').textContent = isCO2Type(type) ? '(10 yrs)' : (type ? '(5 yrs)' : '');
+  onPrevPressureTestDateChange();
 }
 function onServiceDateChange(){
   const d = document.getElementById('eqServiceDate').value;
   if(!d) return;
-  const type = document.getElementById('eqType').value;
   const base = new Date(d+'T00:00:00');
   const nextService = new Date(base); nextService.setFullYear(nextService.getFullYear()+1);
   document.getElementById('eqNextDue').value = nextService.toISOString().slice(0,10);
-  const ptYears = isCO2Type(type) ? 10 : 5;
-  const pt = new Date(base); pt.setFullYear(pt.getFullYear()+ptYears);
-  document.getElementById('eqPressureTestDue').value = pt.toISOString().slice(0,10);
+}
+function onPrevPressureTestDateChange(){
+  const prev = document.getElementById('eqPrevPressureTestDate').value;
+  const type = document.getElementById('eqType').value;
+  document.getElementById('eqPressureTestDue').value = computePressureTestDue(prev, type);
 }
 
 /* ---------- Equipment form ---------- */
@@ -1044,6 +1061,7 @@ function openEquipmentForm(id){
     document.getElementById('eqMfgDate').value = e.mfgDate || '';
     document.getElementById('eqServiceDate').value = e.serviceDate || '';
     document.getElementById('eqNextDue').value = e.nextServiceDue || '';
+    document.getElementById('eqPrevPressureTestDate').value = e.previousPressureTestDate || '';
     document.getElementById('eqPressureTestDue').value = e.pressureTestDue || '';
     document.getElementById('eqStatus').value = e.status || 'pass';
     document.getElementById('eqInspDate').value = e.inspectionDate || '';
@@ -1055,7 +1073,7 @@ function openEquipmentForm(id){
   } else {
     document.getElementById('equipFormTitle').textContent = 'New equipment record';
     document.getElementById('deleteEqBtn').style.display='none';
-    ['eqType','eqSize','eqMake','eqSerial','eqLocation','eqMfgDate','eqServiceDate','eqNextDue','eqPressureTestDue','eqNotes'].forEach(idn=>document.getElementById(idn).value='');
+    ['eqType','eqSize','eqMake','eqSerial','eqLocation','eqMfgDate','eqServiceDate','eqNextDue','eqPrevPressureTestDate','eqPressureTestDue','eqNotes'].forEach(idn=>document.getElementById(idn).value='');
     document.getElementById('eqStatus').value='pass';
     document.getElementById('eqInspDate').value = new Date().toISOString().slice(0,10);
     document.getElementById('eqTechDisplay').textContent = currentProfile.name + (currentProfile.saqcc ? (' · ' + currentProfile.saqcc) : '');
@@ -1092,6 +1110,7 @@ async function saveEquipment(){
     mfgDate: document.getElementById('eqMfgDate').value,
     serviceDate: document.getElementById('eqServiceDate').value,
     nextServiceDue: document.getElementById('eqNextDue').value,
+    previousPressureTestDate: document.getElementById('eqPrevPressureTestDate').value,
     pressureTestDue: document.getElementById('eqPressureTestDue').value,
     checklist: currentChecklistValues,
     status: document.getElementById('eqStatus').value,
