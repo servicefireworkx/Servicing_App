@@ -681,14 +681,19 @@ async function toggleSiteCompletion(){
 }
 
 /* ---------- Shared helpers for certificate/register generation ---------- */
-async function fetchTemplateArrayBuffer(url){
-  try{
-    const res = await fetch(url, { cache: 'no-store' });
-    if(!res.ok) throw new Error(`Could not load ${url} (HTTP ${res.status}). Make sure it's uploaded alongside index.html.`);
-    return await res.arrayBuffer();
-  }catch(e){
-    throw new Error(`Could not load template ${url}: ${e.message}`);
+async function fetchTemplateArrayBuffer(urls){
+  const candidates = Array.isArray(urls) ? urls : [urls];
+  const errors = [];
+  for(const url of candidates){
+    try{
+      const res = await fetch(url, { cache: 'no-store' });
+      if(res.ok) return await res.arrayBuffer();
+      errors.push(`${url} (HTTP ${res.status})`);
+    }catch(e){
+      errors.push(`${url}: ${e.message}`);
+    }
   }
+  throw new Error(`Could not load template. Tried: ${candidates.join(', ')}. ${errors.join(' | ')}`);
 }
 
 // Friendly service-line wording for the certificate (e.g. "12 x 4.5kg Fire Extinguisher Service")
@@ -760,7 +765,11 @@ async function openCertificate(siteId){
       ? site.completedAt.toDate().toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' })
       : new Date().toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' });
 
-    const templateBuf = await fetchTemplateArrayBuffer('certificate-template.docx');
+    const templateBuf = await fetchTemplateArrayBuffer([
+      'certificate-template.docx',
+      'certificate-template%20(1).docx',
+      'certificate-template%20(1).docx?raw=1'
+    ]);
     const zip = new PizZip(templateBuf);
     const doc = new window.docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
     doc.render({
@@ -851,7 +860,11 @@ async function exportSiteRegister(siteId){
     const nextDueDates = items.map(i=>i.nextServiceDue).filter(Boolean).sort();
     const earliestNextDue = nextDueDates.length ? nextDueDates[0] : '';
 
-    const templateBuf = await fetchTemplateArrayBuffer('site-register-template.xlsx');
+    const templateBuf = await fetchTemplateArrayBuffer([
+      'site-register-template.xlsx',
+      'site-register-template%20.xlsx',
+      'site-register-template.xlsx?raw=1'
+    ]);
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(templateBuf);
 
